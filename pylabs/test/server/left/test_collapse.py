@@ -20,6 +20,7 @@ from Compat import X
 import arakoon
 import time
 import logging
+
 from threading import Thread
 from nose.tools import *
 
@@ -85,6 +86,111 @@ def test_remote_collapse():
         up2date = cli.expectProgressPossible()
     logging.info("catchup from collapsed node finished")
 
+@Common.with_custom_setup(Common.setup_3_nodes, Common.basic_teardown)
+def test_remote_collapse_under_load():
+    n = 54321
+    Common.iterate_n_times(n, Common.set_get_and_delete)
+    logging.info("did %i sets, now do bench", n)
+    cluster = Common._getCluster()
+    path = cluster._getConfigFileName() + ".cfg"
+    f = open("./outputFile", 'wb')
+    bench = X.subprocess.Popen([Common.CONFIG.binary_full_path,
+                              '-config', path ,'--benchmark',
+                              '-scenario','master, set, set_tx, get',
+                              '-max_n', '60000'],
+                             stdout=f,
+                             stderr=f)
+    time.sleep(10.0)
+
+    # bench is up to speed. collapse
+
+    zero = Common.node_names[0]
+    config = Common.getConfig(zero)
+    cluster_id = Common.CONFIG.cluster_id
+    ip = config['ip']
+    port = config['client_port']
+    f2 = open('collapse_output','wb')
+    args = [Common.CONFIG.binary_full_path,
+                                 '--collapse-remote', cluster_id,
+                                 ip,port,str(5)]
+    collapse = X.subprocess.Popen(args,
+                                  stdout = f2,
+                                  stderr = f2)
+
+    time.sleep(5)
+    #but stop while collapsing.
+    Common.stopOne(zero)
+
+    #cluster moves on
+    Common.iterate_n_times(n, Common.set_get_and_delete)
+
+
+    Common.startOne(zero)
+    time.sleep(20)
+
+    Common.assert_running_nodes(3)
+    client = Common.get_client()
+    m = client.whoMaster()
+    logging.info("master is:%s", m)
+    assert_true(m in Common.node_names)
+
+    #
+    bench.wait()
+    collapse.wait()
+
+@Common.with_custom_setup(Common.setup_3_nodes_mini, Common.basic_teardown)
+def test_collapse_during_catchup():
+    n = 54321
+    t0 = time.time()
+    Common.iterate_n_times(n, Common.set_get_and_delete)
+    t1 = time.time()
+    duration = t1 - t0
+    zero = Common.node_names[0]
+    Common.stopOne(zero)
+    Common.iterate_n_times(n, Common.set_get_and_delete)
+    Common.startOne(zero)
+    logging.info("duration = %d", duration)
+
+    time.sleep(duration / 3)
+
+    Common.collapse(zero, n=5)
+    cluster = Common._getCluster()
+
+
+    client = cluster.getClient()
+
+    def zero_state():
+        state = client.getCurrentState(zero)
+        return state
+
+    state = None
+    count = 0
+
+    # collapsing and catchup will be racing.
+    # the most annoying scenario is when catchup wins,
+    # but whatever happens, the node needs to become a slave
+    #
+
+    try:
+        while count < 100 and state != 'Slave_steady_state' :
+            state = zero_state()
+            logging.info("%i zero state:%s", count, state)
+            count = count + 1
+    except Exception,e :
+        logging.info("Exception:", e)
+
+    status = cluster.getStatusOne(zero)
+    ok = status == X.AppStatusType.RUNNING
+    if not ok:
+        cfg = Common.getConfig(zero)
+        log_dir = cfg['log_dir']
+        log_file = '/'.join([log_dir, "%s.log" % (zero) ])
+        tail = X.subprocess.check_output("tail -50 %s" % log_file, shell = True)
+        for line in tail.split('\n'):
+            logging.info("%s:%s" % (zero, line))
+
+
+    assert_true(ok)
 
 @Common.with_custom_setup(Common.setup_2_nodes_mini, Common.basic_teardown)
 def test_remote_collapse_client():

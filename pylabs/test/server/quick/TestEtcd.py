@@ -148,7 +148,7 @@ class TestEtcd(TestCase):
         self._server.start()
         cfg = self._config()
         cfg_s = X.cfg2str(cfg)
-        logging.debug("cfg_s=%s",cfg_s)
+        logging.debug("cfg_s='%s'",cfg_s)
         self._etcdClient.set(self._cluster_id,cfg_s)
 
 
@@ -168,7 +168,9 @@ class TestEtcd(TestCase):
     def testEtcdUsage(self):
         logging.debug("testUsage")
         url = self._server.url(self._cluster_id)
-        subprocess.call("pgrep -a arakoon", shell = True)
+
+        subprocess.call("for x in $(pgrep arakoon); do cat /proc/$x/cmdline; echo; done",
+                        shell = True)
 
         # startup
         def _arakoon_cli(x, tail = None):
@@ -183,16 +185,34 @@ class TestEtcd(TestCase):
         logging.debug('calling: %s', ' '.join(cmd))
         r = subprocess.call(cmd, close_fds = True)
 
-        time.sleep(1.)
-
         # cli node-state, & verify server's running
+        def wait_for_master():
+            time.sleep(1.0)
+            have_master = False
+            count = 0
+            master_states = [
+                'Stable_master',
+                'Master_dictate',
+                'Accepteds_check_done'
+            ]
 
-        cmd = _arakoon_cli(['--node-state','etcd_ara0'])
-        logging.debug('calling: %s', ' '.join(cmd))
-        r = subprocess.check_output(cmd).strip()
-        logging.debug("node state:%s", r)
-        self.assertEquals(r, 'Stable_master')
-        # cli crud
+            while (not have_master) and (count < 10) :
+                cmd = _arakoon_cli(['--node-state','etcd_ara0'])
+                logging.debug('calling: %s', ' '.join(cmd))
+                r = subprocess.check_output(cmd).strip()
+                logging.debug("node state:%s", r)
+
+                if r in master_states:
+                    have_master = True
+                else:
+                    count = count + 1
+
+            if have_master:
+                return
+            else:
+                raise Exception("no master");
+
+        wait_for_master()
 
         key = "some_key"
         value = "some_value"
@@ -215,7 +235,7 @@ class TestEtcd(TestCase):
         node = 'etcd_ara0'
         cfg.set(node, 'log_level','debug')
         cfg_s = X.cfg2str(cfg)
-        logging.debug("cfg_s= %s", cfg_s)
+        logging.debug("cfg_s= '%s'", cfg_s)
         self._etcdClient.set(self._cluster_id, cfg_s)
         cmd = ["fuser","-n","tcp", "4000","-k", "-%s" % 'USR1' ]
         subprocess.call(cmd)

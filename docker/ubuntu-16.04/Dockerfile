@@ -61,7 +61,7 @@ RUN eval `${opam_env}` && \
         quickcheck.1.0.2 \
         conf-libev \
         core.114.05+21 \
-        redis.0.3.1 \
+        redis.0.3.3 \
         uri.1.9.2
 
 
@@ -93,4 +93,4 @@ RUN su - -c "echo 'eval `${opam_env}`' >> /home/jenkins/.profile"
 RUN echo "jenkins ALL=NOPASSWD: ALL" >/etc/sudoers.d/jenkins
 
 
-ENTRYPOINT ["/home/jenkins/arakoon/docker/docker-entrypoint.sh"]
+ENTRYPOINT ["/bin/bash", "-c", "set -e && /home/jenkins/arakoon/docker/docker-entrypoint.sh $@"]
